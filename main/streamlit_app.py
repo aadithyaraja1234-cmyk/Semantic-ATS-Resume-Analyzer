@@ -1,22 +1,16 @@
 import streamlit as st
 from agent_brain import resume_agent
 
-st.set_page_config(
-    page_title="AI Resume Analyzer",
-    page_icon="📄",
-    layout="wide"
-)
+st.set_page_config(page_title="Semantic ATS Resume Analyzer", layout="wide")
 
-st.title("📄 AI Resume Analyzer")
+st.title("📄 Semantic ATS Resume Analyzer")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("📌 Resume")
     resume_text = st.text_area("Paste Resume Text", height=300)
 
 with col2:
-    st.subheader("💼 Job Description")
     job_description = st.text_area("Paste Job Description", height=300)
 
 st.markdown("---")
@@ -24,12 +18,10 @@ st.markdown("---")
 if st.button("🚀 Analyze Resume"):
 
     if not resume_text or not job_description:
-        st.warning("Please enter both Resume and Job Description.")
+        st.warning("Please enter both fields.")
     else:
         with st.spinner("Analyzing..."):
             result = resume_agent(resume_text, job_description)
-
-        st.success("Analysis Complete!")
 
         st.subheader("📊 Match Score")
         st.progress(int(result["score"]))
