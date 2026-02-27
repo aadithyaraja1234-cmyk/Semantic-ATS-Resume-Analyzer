@@ -1,21 +1,18 @@
 import re
 import spacy
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 
-# Load models
 nlp = spacy.load("en_core_web_sm")
-model = SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
-IMPORTANT_PATTERNS = ["must have", "required", "mandatory", "strong experience", "expert"]
+IMPORTANT_PATTERNS = ["must have", "required", "mandatory", "strong experience"]
 
 SKILL_CATEGORIES = {
     "Cloud": ["aws", "azure", "gcp", "cloud"],
     "DevOps": ["docker", "kubernetes", "terraform", "ci/cd"],
-    "Backend": ["python", "java", "node", "spring"],
-    "ML": ["machine learning", "deep learning", "tensorflow", "pytorch"],
-    "Database": ["sql", "mysql", "postgresql", "mongodb"]
+    "Backend": ["python", "java", "node"],
+    "ML": ["machine learning", "deep learning", "tensorflow"],
+    "Database": ["sql", "mysql", "postgresql"]
 }
 
 
@@ -30,45 +27,39 @@ def extract_skills(text):
 
     for chunk in doc.noun_chunks:
         phrase = clean_phrase(chunk.text)
-        if len(phrase) > 2 and not phrase.isdigit():
+        if len(phrase) > 2:
             skills.add(phrase)
 
     return list(skills)
 
 
 def detect_importance(jd_text, skill):
-    jd_text = jd_text.lower()
     for pattern in IMPORTANT_PATTERNS:
-        if pattern in jd_text and skill in jd_text:
+        if pattern in jd_text.lower() and skill in jd_text.lower():
             return 3
     return 1
 
 
 def extract_weighted_skills(jd_text):
     skills = extract_skills(jd_text)
-    weighted = {}
-    for skill in skills:
-        weighted[skill] = detect_importance(jd_text, skill)
-    return weighted
+    return {skill: detect_importance(jd_text, skill) for skill in skills}
 
 
-def semantic_match(resume_skills, jd_weighted, threshold=0.6):
+def semantic_match(resume_skills, jd_weighted, threshold=0.2):
     if not resume_skills or not jd_weighted:
         return [], list(jd_weighted.keys())
 
-    resume_emb = model.encode(resume_skills)
-    jd_skills = list(jd_weighted.keys())
-    jd_emb = model.encode(jd_skills)
+    vectorizer = TfidfVectorizer().fit(resume_skills + list(jd_weighted.keys()))
+
+    resume_vec = vectorizer.transform(resume_skills)
+    jd_vec = vectorizer.transform(list(jd_weighted.keys()))
 
     matched = []
     missing = []
 
-    for i, jd_skill in enumerate(jd_skills):
-        similarities = cosine_similarity(
-            [jd_emb[i]], resume_emb
-        )[0]
-
-        if np.max(similarities) > threshold:
+    for i, jd_skill in enumerate(jd_weighted.keys()):
+        sim_scores = cosine_similarity(jd_vec[i], resume_vec)[0]
+        if max(sim_scores) > threshold:
             matched.append(jd_skill)
         else:
             missing.append(jd_skill)
@@ -89,25 +80,11 @@ def calculate_weighted_score(matched, jd_weighted):
 def categorize_skills(matched):
     category_scores = {}
 
-    for category, skills in SKILL_CATEGORIES.items():
-        count = sum(1 for s in matched if any(k in s.lower() for k in skills))
+    for category, keywords in SKILL_CATEGORIES.items():
+        count = sum(1 for s in matched if any(k in s.lower() for k in keywords))
         category_scores[category] = count
 
     return category_scores
-
-
-def extract_years(text):
-    match = re.search(r"(\d+)\s+years", text.lower())
-    return int(match.group(1)) if match else 0
-
-
-def detect_leadership(text):
-    keywords = ["led", "managed", "mentored", "architected"]
-    return any(word in text.lower() for word in keywords)
-
-
-def detect_impact(text):
-    return bool(re.findall(r"\d+%", text))
 
 
 def compare_skills(resume_text, jd_text):
@@ -117,18 +94,11 @@ def compare_skills(resume_text, jd_text):
     matched, missing = semantic_match(resume_skills, jd_weighted)
     score = calculate_weighted_score(matched, jd_weighted)
 
-    category_scores = categorize_skills(matched)
-
-    years = extract_years(resume_text)
-    leadership = detect_leadership(resume_text)
-    impact = detect_impact(resume_text)
+    categories = categorize_skills(matched)
 
     return {
         "matched": matched,
         "missing": missing,
         "score": score,
-        "categories": category_scores,
-        "years": years,
-        "leadership": leadership,
-        "impact": impact
+        "categories": categories
     }
