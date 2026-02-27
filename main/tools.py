@@ -4,6 +4,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 
+# Load models
 nlp = spacy.load("en_core_web_sm")
 model = SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
@@ -89,7 +90,7 @@ def categorize_skills(matched):
     category_scores = {}
 
     for category, skills in SKILL_CATEGORIES.items():
-        count = sum(1 for s in matched if any(k in s for k in skills))
+        count = sum(1 for s in matched if any(k in s.lower() for k in skills))
         category_scores[category] = count
 
     return category_scores
