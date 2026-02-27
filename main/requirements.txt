@@ -1,6 +1,5 @@
 streamlit
 spacy==3.7.2
-sentence-transformers
 scikit-learn
 litellm
 python-dotenv
