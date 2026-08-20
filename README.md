@@ -181,6 +181,19 @@ main/
   threshold, a larger curated skill taxonomy, OCR fallback for scanned PDFs,
   batch scoring against multiple JDs, and a downloadable PDF report.
 
+## Privacy
+
+Nothing uploaded or pasted is stored — it exists only in memory for the
+session and is discarded when the tab closes. The raw resume/JD text never
+leaves the app; only the extracted skill list and match score are sent to
+the AI evaluation step (via whichever LLM provider is configured), and only
+if that step runs. No accounts, cookies, or analytics are used.
+
+## Contact
+
+Questions, bugs, or ideas: open an [issue](https://github.com/aadithyaraja1234-cmyk/Semantic-ATS-Resume-Analyzer/issues)
+or reach out via [GitHub](https://github.com/aadithyaraja1234-cmyk).
+
 ## License
 
 [MIT](LICENSE)

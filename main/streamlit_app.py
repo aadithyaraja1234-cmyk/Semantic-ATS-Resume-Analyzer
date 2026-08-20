@@ -2,9 +2,25 @@ import streamlit as st
 from agent_brain import resume_agent
 from file_parser import extract_text
 
-st.set_page_config(page_title="Semantic ATS Resume Analyzer", layout="wide")
+st.set_page_config(
+    page_title="Semantic ATS Resume Analyzer",
+    page_icon="📄",
+    layout="wide"
+)
 
 st.title("📄 Semantic ATS Resume Analyzer")
+
+with st.expander("🔒 Privacy — what happens to your data"):
+    st.markdown(
+        "- Nothing you upload or paste is stored. It only exists in memory "
+        "for this session and is discarded when you close the tab.\n"
+        "- Your **raw resume/JD text never leaves this app**. Only the "
+        "extracted skill list and match score are sent to the AI evaluation "
+        "step, via whichever LLM provider is configured "
+        "([LiteLLM](https://github.com/BerriAI/litellm), Groq by default) "
+        "-- and only if that step runs at all.\n"
+        "- No accounts, cookies, or analytics are used by this app."
+    )
 
 col1, col2 = st.columns(2)
 
