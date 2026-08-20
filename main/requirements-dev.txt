@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest
+fpdf2  # only used in tests, to generate real PDF fixtures for file_parser tests

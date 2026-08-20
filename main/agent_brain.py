@@ -1,5 +1,5 @@
 from tools import compare_skills
-from llm_layer import generate_agent_response
+from llm_layer import generate_agent_response, LLMConfigError
 
 
 def get_recommendation(score):
@@ -28,7 +28,8 @@ def resume_agent(resume_text, job_description):
 
     recommendation = get_recommendation(data["score"])
     risk = get_risk(data["score"])
-    confidence = round(data["score"] * 0.9, 2)
+    # data["confidence"] is already computed by compare_skills(), based on
+    # how much skill signal the score is built on -- not recomputed here.
 
     prompt = f"""
 Evaluate professionally.
@@ -44,13 +45,21 @@ Match Score: {data["score"]}%
 Provide concise professional evaluation.
 """
 
-    llm_response = generate_agent_response(prompt)
+    # The skill-matching/scoring above never depends on the LLM, so a missing
+    # API key or provider outage shouldn't take down the whole analysis --
+    # only the AI evaluation section degrades.
+    try:
+        analysis = generate_agent_response(prompt)
+        analysis_error = False
+    except LLMConfigError as e:
+        analysis = str(e)
+        analysis_error = True
 
     data.update({
         "recommendation": recommendation,
         "risk": risk,
-        "confidence": confidence,
-        "analysis": llm_response
+        "analysis": analysis,
+        "analysis_error": analysis_error
     })
 
     return data
