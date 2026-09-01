@@ -1,15 +1,3 @@
----
-title: Semantic ATS Resume Analyzer
-emoji: 📄
-colorFrom: blue
-colorTo: indigo
-sdk: streamlit
-python_version: "3.10"
-app_file: main/streamlit_app.py
-pinned: false
-license: mit
----
-
 # 📄 Semantic ATS Resume Analyzer
 
 An AI-powered tool that scores how well a resume matches a job description —

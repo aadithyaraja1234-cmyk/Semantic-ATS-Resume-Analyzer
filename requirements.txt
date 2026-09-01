@@ -1,4 +1,0 @@
-# Root requirements.txt exists only for Hugging Face Spaces, which expects
-# it at the repo root. main/requirements.txt is the actual source of truth
-# for local dev and CI -- this just points at it.
--r main/requirements.txt
