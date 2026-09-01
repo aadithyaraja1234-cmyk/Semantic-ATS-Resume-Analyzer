@@ -74,19 +74,28 @@ if st.button("🚀 Analyze Resume"):
 
         with col1:
             st.subheader("🟢 Matched Skills")
-            for skill in result["matched"]:
-                st.write(f"✔ {skill}")
+            if result["matched"]:
+                for skill in result["matched"]:
+                    st.write(f"✔ {skill.title()}")
+            else:
+                st.caption("No matching skills found.")
 
         with col2:
             st.subheader("🔴 Missing Skills")
-            for skill in result["missing"]:
-                st.write(f"✘ {skill}")
+            if result["missing"]:
+                for skill in result["missing"]:
+                    st.write(f"✘ {skill.title()}")
+            else:
+                st.caption("No missing skills — full coverage!")
 
         st.markdown("---")
 
         st.subheader("📂 Category Distribution")
-        for cat, val in result["categories"].items():
-            st.write(f"{cat}: {val}")
+        nonzero_categories = {cat: val for cat, val in result["categories"].items() if val > 0}
+        if nonzero_categories:
+            st.bar_chart(nonzero_categories)
+        else:
+            st.caption("No categorized skills among the matches.")
 
         st.markdown("---")
 

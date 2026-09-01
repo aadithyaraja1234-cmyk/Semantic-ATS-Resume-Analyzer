@@ -1,8 +1,7 @@
 import re
-import spacy
 from sentence_transformers import SentenceTransformer, util
 
-nlp = spacy.load("en_core_web_sm")
+from skills_taxonomy import SKILL_TAXONOMY
 
 _model = None
 
@@ -17,179 +16,110 @@ def get_embedding_model():
 
 IMPORTANT_PATTERNS = ["must have", "required", "mandatory", "strong experience"]
 
-SKILL_CATEGORIES = {
-    "Cloud": ["aws", "azure", "gcp", "cloud"],
-    "DevOps": ["docker", "kubernetes", "terraform", "ci/cd"],
-    "Backend": ["python", "java", "node"],
-    "ML": ["machine learning", "deep learning", "tensorflow"],
-    "Database": ["sql", "mysql", "postgresql"]
-}
-
-# Generic noun phrases that show up constantly in resumes/JDs but are never
-# actual skills (e.g. "years of experience", "our team"). Filtering these
-# out keeps matched/missing lists focused on real skill terms. Checked AFTER
-# clean_phrase(), so both "candidate" and "a candidate" are caught.
-GENERIC_TERMS = {
-    "years", "year", "experience", "years of experience", "team", "teams",
-    "company", "companies", "role", "roles", "position", "positions",
-    "candidate", "candidates", "opportunity", "opportunities", "environment",
-    "ability", "abilities", "knowledge", "work", "responsibility",
-    "responsibilities", "skill", "skills", "job", "jobs", "background",
-    "understanding", "plus", "someone", "individual", "who", "what", "this",
-    "that", "it", "we", "our", "us", "you", "they"
-}
-
-# Qualifier words that precede a real skill/requirement but aren't part of
-# it (e.g. "strong experience" -> "experience", "solid understanding" ->
-# "understanding" -- both then dropped by GENERIC_TERMS).
-QUALIFIER_PREFIXES = ("strong ", "solid ", "excellent ", "proven ", "good ", "extensive ")
-
-# spaCy's noun_chunks doesn't split conjunctions ("python and cloud
-# infrastructure" comes back as one chunk), which buries individual skills
-# inside compound phrases. Splitting on these delimiters recovers them.
-CONJUNCT_SPLIT = re.compile(r"\s*(?:,|/|&|\band\b|\bor\b)\s*")
-
-# Common abbreviations/aliases mapped to a shared canonical form, so e.g. a
-# resume saying "JS" matches a JD asking for "JavaScript" as an exact hit
-# instead of relying on embedding similarity for well-known equivalents.
+# Derived from SKILL_TAXONOMY (single source of truth) --
+#   SKILL_ALIASES: alias -> canonical name, e.g. "js" -> "javascript"
+#   SKILL_CATEGORIES: category -> [canonical skill names in that category]
 SKILL_ALIASES = {
-    "js": "javascript",
-    "ts": "typescript",
-    "k8s": "kubernetes",
-    "aws": "amazon web services",
-    "gcp": "google cloud platform",
-    "ml": "machine learning",
-    "dl": "deep learning",
-    "nlp": "natural language processing",
-    "oop": "object oriented programming",
-    "postgres": "postgresql",
-    "db": "database",
-    "dbs": "databases",
-    "ui": "user interface",
-    "ux": "user experience",
-    "qa": "quality assurance",
-    "devops": "development operations",
-    "ci/cd": "continuous integration and continuous deployment",
-    "cicd": "continuous integration and continuous deployment",
+    alias: canonical
+    for canonical, info in SKILL_TAXONOMY.items()
+    for alias in info["aliases"]
 }
 
+SKILL_CATEGORIES = {}
+for _canonical, _info in SKILL_TAXONOMY.items():
+    SKILL_CATEGORIES.setdefault(_info["category"], []).append(_canonical)
 
-def canonicalize(phrase):
-    return SKILL_ALIASES.get(phrase, phrase)
+# Precompiled word-boundary-safe regex for every canonical name + alias, so
+# "java" doesn't match inside "javascript" and "r" doesn't match inside
+# "for". Built once at import time since this runs on every analysis.
+_TERM_TO_CANONICAL = {canonical: canonical for canonical in SKILL_TAXONOMY}
+_TERM_TO_CANONICAL.update(SKILL_ALIASES)
 
-
-def clean_phrase(phrase):
-    phrase = re.sub(r"^(a|an|the)\s+", "", phrase.strip())
-    for prefix in QUALIFIER_PREFIXES:
-        if phrase.startswith(prefix):
-            phrase = phrase[len(prefix):]
-    return phrase.strip()
-
-
-def is_generic_chunk(chunk):
-    """Filter out noun chunks that are filler rather than meaningful skill terms."""
-    if chunk.root.pos_ == "PRON":
-        return True
-    if all(token.is_stop for token in chunk):
-        return True
-    return False
+_SKILL_PATTERNS = [
+    (re.compile(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])"), canonical)
+    for term, canonical in _TERM_TO_CANONICAL.items()
+]
 
 
-def extract_candidate_phrases(span):
-    """Pull skill-like phrases out of a sentence/doc span, splitting conjunctions."""
-    phrases = []
+def canonicalize(term):
+    return SKILL_ALIASES.get(term, term)
 
-    for chunk in span.noun_chunks:
-        if is_generic_chunk(chunk):
-            continue
-        for part in CONJUNCT_SPLIT.split(chunk.text):
-            phrase = clean_phrase(part).lower()
-            if phrase in GENERIC_TERMS:
-                continue
-            # length filter exists to drop junk residue (stray articles,
-            # single letters), but must not drop legitimate short
-            # abbreviations the alias table depends on (js, ui, ux, ml...).
-            if len(phrase) > 2 or phrase in SKILL_ALIASES:
-                phrases.append(phrase)
 
-    return phrases
+def find_taxonomy_skills(text):
+    """Find which known skills (by canonical name or alias) appear in the text."""
+    text_lower = text.lower()
+    return {canonical for pattern, canonical in _SKILL_PATTERNS if pattern.search(text_lower)}
+
+
+def split_sentences(text):
+    """Plain punctuation-based sentence splitting -- no NLP model needed for this."""
+    text = text.replace("\n", " ")
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
 
 
 def extract_skills(text):
-    # Parsed on the original (not lowercased) text -- spaCy's parser relies
-    # on capitalization cues for both sentence boundaries and noun-chunk
-    # accuracy. Phrases are lowercased individually as they're extracted.
-    doc = nlp(text)
-    return list(set(extract_candidate_phrases(doc)))
+    return list(find_taxonomy_skills(text))
 
 
 def extract_weighted_skills(jd_text):
     """
-    Extract skill phrases from the JD and weight each one by whether it's
-    mentioned in the same sentence as an importance signal (e.g. "required",
-    "must have"), rather than just anywhere in the whole document.
+    Find known skills in the JD and weight each one by whether it's
+    mentioned in a sentence containing an importance signal (e.g.
+    "required", "must have"), rather than just anywhere in the document.
     """
-    doc = nlp(jd_text)
     weighted = {}
 
-    for sent in doc.sents:
-        weight = 3 if any(pattern in sent.text.lower() for pattern in IMPORTANT_PATTERNS) else 1
+    for sentence in split_sentences(jd_text):
+        weight = 3 if any(pattern in sentence.lower() for pattern in IMPORTANT_PATTERNS) else 1
 
-        for phrase in extract_candidate_phrases(sent):
+        for skill in find_taxonomy_skills(sentence):
             # keep the strongest weight seen if a skill is mentioned more than once
-            weighted[phrase] = max(weighted.get(phrase, 0), weight)
+            weighted[skill] = max(weighted.get(skill, 0), weight)
 
     return weighted
 
 
 def semantic_match(resume_skills, jd_weighted, threshold=0.4):
     """
-    Match JD skill phrases against resume skill phrases using sentence
-    embeddings + cosine similarity, so e.g. "backend development" and
-    "building backend services" can match even without exact word overlap.
+    JD skills are matched against resume skills exactly first (both sides
+    are already canonical taxonomy names, so this is a direct set lookup,
+    not a guess). Anything left over falls back to embedding similarity --
+    safe here because both sides are clean curated skill names, not noisy
+    extracted text.
 
-    threshold=0.4 is an empirical calibration for all-MiniLM-L6-v2 on short
-    technical phrases (1-3 words): on a manual sample, true related pairs
-    like "relational databases"/"postgresql" (0.45) and "machine learning"/
-    "tensorflow" (0.40) scored above it, while unrelated pairs like "docker"/
-    "kubernetes" (0.32, related tools but not the same skill) and "sql"/
-    "javascript" (0.18) stayed below it. Short-phrase similarity is noisier
-    than full-sentence similarity, so don't expect a clean separation --
-    this is a reasonable middle ground, not a precise decision boundary.
+    threshold=0.4 is the same empirical calibration used before this
+    rewrite (see test_tools.py's TestSemanticMatchCalibration): the
+    embedding vectors for a given pair of skill names don't change just
+    because the surrounding extraction pipeline changed, so the earlier
+    measurements are still valid evidence -- e.g. "postgresql"/"relational
+    databases" (0.45) and "tensorflow"/"machine learning" (0.40) score
+    above it, while "docker"/"kubernetes" (0.32, related tools but not the
+    same skill) and "sql"/"javascript" (0.18) stay below it.
     """
-    if not resume_skills or not jd_weighted:
-        return [], list(jd_weighted.keys())
+    if not jd_weighted:
+        return [], []
 
-    # Exact-match pass first: canonicalized aliases (e.g. "js" == "javascript")
-    # are a guaranteed match and shouldn't be left to embedding-similarity
-    # noise, which is unreliable on short technical phrases (see threshold
-    # note below).
-    resume_canon = {canonicalize(s) for s in resume_skills}
+    resume_set = set(resume_skills)
+    jd_skills = list(jd_weighted.keys())
 
-    matched = []
-    remaining_jd = []
-
-    for jd_skill in jd_weighted.keys():
-        if canonicalize(jd_skill) in resume_canon:
-            matched.append(jd_skill)
-        else:
-            remaining_jd.append(jd_skill)
+    matched = [s for s in jd_skills if s in resume_set]
+    remaining = [s for s in jd_skills if s not in resume_set]
 
     missing = []
 
-    if remaining_jd:
+    if remaining and resume_skills:
         model = get_embedding_model()
         resume_emb = model.encode(resume_skills, convert_to_tensor=True)
-        jd_emb = model.encode(remaining_jd, convert_to_tensor=True)
-
+        jd_emb = model.encode(remaining, convert_to_tensor=True)
         scores = util.cos_sim(jd_emb, resume_emb)
 
-        for i, jd_skill in enumerate(remaining_jd):
-            best_score = float(scores[i].max())
-            if best_score >= threshold:
-                matched.append(jd_skill)
+        for i, skill in enumerate(remaining):
+            if float(scores[i].max()) >= threshold:
+                matched.append(skill)
             else:
-                missing.append(jd_skill)
+                missing.append(skill)
+    else:
+        missing = remaining
 
     return matched, missing
 
@@ -219,11 +149,17 @@ def calculate_confidence(score, jd_weighted, resume_skills):
 
 
 def categorize_skills(matched):
-    category_scores = {}
+    """
+    matched entries are already exact canonical taxonomy names (see
+    semantic_match), so this is a direct lookup, not substring guessing.
+    """
+    category_scores = {category: 0 for category in SKILL_CATEGORIES}
 
-    for category, keywords in SKILL_CATEGORIES.items():
-        count = sum(1 for s in matched if any(k in s.lower() for k in keywords))
-        category_scores[category] = count
+    for skill in matched:
+        for category, skills in SKILL_CATEGORIES.items():
+            if skill in skills:
+                category_scores[category] += 1
+                break  # each taxonomy skill belongs to exactly one category
 
     return category_scores
 

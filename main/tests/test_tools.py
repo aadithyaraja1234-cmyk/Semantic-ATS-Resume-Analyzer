@@ -4,7 +4,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tools import (
-    clean_phrase,
     calculate_weighted_score,
     calculate_confidence,
     extract_years_experience,
@@ -14,26 +13,21 @@ from tools import (
     canonicalize,
     semantic_match,
     extract_skills,
+    extract_weighted_skills,
+    find_taxonomy_skills,
     compare_skills,
 )
 from agent_brain import get_recommendation, get_risk
 
 
-def test_clean_phrase_strips_leading_articles():
-    assert clean_phrase("the python") == "python"
-    assert clean_phrase("an api") == "api"
-    assert clean_phrase("a database") == "database"
-    assert clean_phrase("kubernetes") == "kubernetes"
-
-
 def test_calculate_weighted_score_full_match():
-    jd_weighted = {"python": 3, "aws": 1}
-    matched = ["python", "aws"]
+    jd_weighted = {"python": 3, "amazon web services": 1}
+    matched = ["python", "amazon web services"]
     assert calculate_weighted_score(matched, jd_weighted) == 100.0
 
 
 def test_calculate_weighted_score_partial_match():
-    jd_weighted = {"python": 3, "aws": 1}
+    jd_weighted = {"python": 3, "amazon web services": 1}
     matched = ["python"]
     assert calculate_weighted_score(matched, jd_weighted) == 75.0
 
@@ -72,11 +66,17 @@ def test_detect_impact_metrics_absent():
 
 
 def test_categorize_skills_counts_by_category():
-    matched = ["python", "docker", "aws"]
+    matched = ["python", "docker", "amazon web services"]
     result = categorize_skills(matched)
-    assert result["Backend"] == 1
-    assert result["DevOps"] == 1
-    assert result["Cloud"] == 1
+    assert result["Programming Languages"] == 1
+    assert result["DevOps & CI/CD"] == 1
+    assert result["Cloud & Infrastructure"] == 1
+
+
+def test_categorize_skills_zero_for_uninvolved_categories():
+    result = categorize_skills(["python"])
+    assert result["Security"] == 0
+    assert result["Design & UX"] == 0
 
 
 def test_get_recommendation_bands():
@@ -113,17 +113,33 @@ def test_compare_skills_returns_expected_shape():
     assert result["years"] == 5
 
 
-def test_extract_skills_keeps_short_alias_abbreviations():
+def test_find_taxonomy_skills_ignores_non_skill_text():
     """
-    Regression test: the length filter meant to drop junk residue (stray
-    articles, single letters) was also silently dropping legitimate 2-char
-    alias abbreviations like "js"/"ui"/"ux" before they ever reached
-    SKILL_ALIASES, making the alias table dead code for exactly the terms
-    it exists to handle.
+    Regression test for the bug that prompted this rewrite: noun-chunk
+    extraction was picking up things like "35%" and "senior backend
+    engineer" as if they were skills. Taxonomy matching only ever returns
+    known skill names, so junk like this can't appear at all.
     """
+    text = "Senior Backend Engineer, improved latency by 35%, strong background, 6 years of experience."
+    skills = find_taxonomy_skills(text)
+    assert "35%" not in skills
+    assert "improved latency" not in skills
+    assert "senior backend engineer" not in skills
+    assert "strong background" not in skills
+
+
+def test_find_taxonomy_skills_word_boundary_safe():
+    """"java" must not match inside "javascript", and vice versa isn't an issue
+    since they're both real distinct taxonomy entries."""
+    skills = find_taxonomy_skills("Experienced in JavaScript development.")
+    assert "javascript" in skills
+    assert "java" not in skills
+
+
+def test_extract_skills_resolves_short_alias_abbreviations():
     skills = extract_skills("Experienced in Python and JS, with a focus on UX.")
-    assert "js" in skills
-    assert "ux" in skills
+    assert "javascript" in skills
+    assert "user experience design" in skills
 
 
 def test_canonicalize_maps_known_aliases():
@@ -132,15 +148,26 @@ def test_canonicalize_maps_known_aliases():
     assert canonicalize("python") == "python"  # no alias -> unchanged
 
 
-def test_semantic_match_exact_alias_bypasses_embeddings():
+def test_alias_abbreviations_match_across_resume_and_jd():
     """
-    Alias matches (e.g. "js" resume skill vs "javascript" JD requirement)
-    should match via exact canonical-form comparison, not embedding
-    similarity -- this must hold even if the embedding model is swapped out.
+    A resume that says "JS" should match a JD that says "JavaScript" -- both
+    resolve to the same canonical name, so this is an exact match, not an
+    embedding-similarity guess.
     """
-    matched, missing = semantic_match(["js"], {"javascript": 3})
-    assert matched == ["javascript"]
+    resume_skills = extract_skills("Experienced in Python and JS development.")
+    jd_weighted = extract_weighted_skills("Looking for strong JavaScript experience.")
+
+    matched, missing = semantic_match(resume_skills, jd_weighted)
+
+    assert "javascript" in matched
     assert missing == []
+
+
+def test_extract_weighted_skills_weights_by_sentence_importance():
+    jd = "Must have Python experience. Docker knowledge is a plus."
+    weighted = extract_weighted_skills(jd)
+    assert weighted["python"] == 3
+    assert weighted["docker"] == 1
 
 
 def test_calculate_confidence_scales_with_signal_size():
@@ -162,9 +189,9 @@ def test_calculate_confidence_zero_signal_is_zero():
 class TestSemanticMatchCalibration:
     """
     Locks in the empirical threshold=0.4 calibration for all-MiniLM-L6-v2 on
-    short technical phrases (see semantic_match()'s docstring). If the model
-    or threshold changes, these should be re-validated, not just adjusted to
-    pass -- they're the actual evidence behind the "0.4" choice.
+    short skill-name phrases (see semantic_match()'s docstring). If the
+    model or threshold changes, these should be re-validated, not just
+    adjusted to pass -- they're the actual evidence behind the "0.4" choice.
     """
 
     def test_related_pairs_match(self):
@@ -178,5 +205,5 @@ class TestSemanticMatchCalibration:
         _, missing = semantic_match(["javascript"], {"sql": 1})
         assert missing == ["sql"]
 
-        _, missing = semantic_match(["photoshop"], {"aws": 1})
-        assert missing == ["aws"]
+        _, missing = semantic_match(["docker"], {"kubernetes": 1})
+        assert missing == ["kubernetes"]

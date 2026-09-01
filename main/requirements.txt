@@ -1,12 +1,6 @@
 streamlit
-numpy<2.0.0  # thinc (spaCy 3.7.2's backend) ships a compiled extension built
-             # against NumPy 1.x; NumPy 2.x breaks it at import (ValueError
-             # in thinc/backends/numpy_ops.pyx). Pin until spaCy/thinc catch up.
-spacy==3.7.2
 sentence-transformers
 litellm
 python-dotenv
 pypdf
 python-docx
-
-https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl

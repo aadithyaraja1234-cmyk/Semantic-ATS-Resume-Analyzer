@@ -8,18 +8,23 @@ JD, and an LLM-generated recruiter-style evaluation.
 ## Features
 
 - **Upload or paste** a resume (PDF, DOCX, or plain text) and a job description
-- **Semantic skill matching** — matches skills by meaning using sentence
-  embeddings (`all-MiniLM-L6-v2`), so e.g. *"building backend services"* can
-  match *"backend development"* even without exact word overlap; common
-  abbreviations (*"JS"* ↔ *"JavaScript"*, *"k8s"* ↔ *"Kubernetes"*) match
-  exactly via an alias table rather than relying on embedding similarity
+- **Curated skill taxonomy** — ~130 real skills across 15 categories
+  (Programming Languages, Cloud & Infrastructure, DevOps & CI/CD, Data
+  Science & ML, Security, Soft Skills, and more) are matched by exact name
+  or known alias (*"JS"* ↔ *"JavaScript"*, *"k8s"* ↔ *"Kubernetes"*), so
+  results are always real skill names — never stray fragments like a
+  percentage or a job title
+- **Semantic fallback matching** — anything not caught by the taxonomy/alias
+  pass falls back to sentence embeddings (`all-MiniLM-L6-v2`), so e.g.
+  *"PostgreSQL"* still credits a JD asking for *"relational databases"*
+  even without an exact name match
 - **Confidence that reflects signal, not just score** — a high match score
   built on only 1-2 extracted requirements is flagged as lower-confidence
   than the same score built on a dozen
 - **Weighted match score** — requirements mentioned alongside language like
   *"required"* or *"must have"* count more than nice-to-haves
-- **Skill categorization** — buckets matched skills into Cloud, DevOps,
-  Backend, ML, and Database
+- **Skill categorization** — matched skills are grouped into their taxonomy
+  category and charted, instead of a flat, mostly-empty keyword count
 - **Resume intelligence** — years of experience, leadership signals, and
   quantified-impact detection, extracted directly from the resume text
 - **AI evaluation** — an LLM (via [LiteLLM](https://github.com/BerriAI/litellm),
@@ -31,28 +36,31 @@ JD, and an LLM-generated recruiter-style evaluation.
 ## How it works
 
 ```
-Resume text ─┐                                   ┌─→ Matched / Missing skills
-             ├─→ spaCy noun-chunk extraction ─┐   │
-JD text ─────┘                                ├─→ Sentence-embedding      ├─→ Weighted match score
-                                               │   cosine similarity      │
-JD sentences ─→ "required"/"must have" scan ───┘   (all-MiniLM-L6-v2)     ├─→ Recommendation / Risk
-                                                                          │
-Resume text ─→ regex: years / leadership / impact signals ───────────────┴─→ Resume intelligence
-                                                                          
+Resume text ─┐                                          ┌─→ Matched / Missing skills
+             ├─→ Curated skill taxonomy (exact + alias) ─┤
+JD text ─────┘   ~130 skills across 15 categories        ├─→ Weighted match score
+                                                          │
+JD sentences ─→ "required"/"must have" scan ─────────────┤
+                                                          ├─→ Recommendation / Risk / Confidence
+Unmatched JD skills ─→ sentence-embedding fallback ───────┤   (all-MiniLM-L6-v2)
+                                                          │
+Resume text ─→ regex: years / leadership / impact signals ┴─→ Resume intelligence
+
 Matched + missing skills + score ─→ LLM prompt ─→ AI evaluation (LiteLLM)
 ```
 
-1. **Skill extraction** — spaCy pulls noun phrases out of both texts, filtering
-   generic filler ("years of experience", "our team") so the lists stay
-   focused on real skill terms.
-2. **Importance weighting** — each JD skill is weighted 3x if it appears in a
-   sentence containing an importance signal ("required", "must have",
-   "mandatory", "strong experience"), otherwise 1x.
-3. **Semantic matching** — resume and JD skill phrases are first compared via
-   an alias table (`js` ↔ `javascript`, `k8s` ↔ `kubernetes`, etc.) for exact
-   matches, then any that don't match are embedded with `sentence-transformers`
-   and compared via cosine similarity, so paraphrases and synonyms still
-   match without needing to be identical strings.
+1. **Skill extraction** — both texts are checked against a curated taxonomy
+   (`skills_taxonomy.py`) of canonical skill names and their common aliases,
+   using word-boundary-safe matching (so "java" never matches inside
+   "javascript"). Only real skill names can ever come out of this step.
+2. **Importance weighting** — the JD is split into sentences; each skill
+   found is weighted 3x if its sentence contains an importance signal
+   ("required", "must have", "mandatory", "strong experience"), otherwise 1x.
+3. **Matching** — resume and JD skills are already canonical taxonomy names
+   at this point, so matching is a direct exact comparison first. Anything
+   left over falls back to embedding similarity between the clean skill
+   names (not noisy free text), catching close synonyms the taxonomy/alias
+   table doesn't explicitly list.
 4. **Scoring** — the match score is the weighted sum of matched JD skills
    over the total weight of all JD skills; confidence then scales that score
    down when it's based on very few extracted skill terms.
@@ -64,31 +72,22 @@ Matched + missing skills + score ─→ LLM prompt ─→ AI evaluation (LiteLLM
 | Layer | Tool |
 |---|---|
 | UI | [Streamlit](https://streamlit.io/) |
-| NLP / skill extraction | [spaCy](https://spacy.io/) (`en_core_web_sm`) |
-| Semantic matching | [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2`) |
+| Skill extraction | Curated taxonomy (`skills_taxonomy.py`) + regex matching |
+| Semantic fallback matching | [sentence-transformers](https://www.sbert.net/) (`all-MiniLM-L6-v2`) |
 | LLM evaluation | [LiteLLM](https://github.com/BerriAI/litellm) (Groq by default; swappable) |
 | File parsing | [pypdf](https://pypdf.readthedocs.io/), [python-docx](https://python-docx.readthedocs.io/) |
 | Tests | [pytest](https://docs.pytest.org/) |
 
 ## Setup
 
-**Requires Python 3.11.** Two independent, unrelated issues rule out every
-other version currently:
+**Requires Python 3.11+.** `litellm` imports `typing.NotRequired`, which only
+exists in the standard library from Python 3.11 onward (PEP 655) -- so 3.10
+and earlier fail at import time. (An earlier version of this app also
+depended on spaCy, which added its own Python-version constraints on top of
+this one -- that dependency has since been removed in favor of a curated
+skill taxonomy, so this is now the only version constraint.)
 
-- **3.12 and up**: `blis` (spaCy's linear-algebra backend) has no prebuilt
-  wheel yet, so pip tries to compile it from source and fails without a C
-  build toolchain. Confirmed against the latest spaCy release too, not just
-  the one pinned here -- this is an upstream packaging gap, not fixable from
-  this repo alone.
-- **3.10 and below**: `litellm` imports `typing.NotRequired`, which only
-  exists in the standard library from Python 3.11 onward (PEP 655) -- so
-  3.10 fails at import time regardless of the spaCy issue above.
-
-`main/requirements.txt` also pins `numpy<2.0.0`: `thinc` (spaCy's backend)
-ships a compiled extension built against NumPy 1.x, and NumPy 2.x breaks it
-at import time with a `ValueError` in `thinc/backends/numpy_ops.pyx`.
-
-If `python --version` shows something newer, install 3.11 alongside it
+If `python --version` shows something older, install 3.11 alongside it
 rather than replacing your default:
 
 ```bash
@@ -149,29 +148,32 @@ Tests run automatically on every push via [GitHub Actions](.github/workflows/tes
 main/
 ├── streamlit_app.py   # UI: upload/paste resume + JD, display results
 ├── agent_brain.py      # Orchestrates scoring + LLM evaluation
-├── tools.py             # Skill extraction, semantic matching, scoring
-├── llm_layer.py          # LiteLLM wrapper with provider-aware error handling
-├── file_parser.py         # PDF/DOCX/TXT text extraction
-├── main.py                 # CLI entry point
-├── requirements.txt         # Runtime dependencies
-├── requirements-dev.txt      # + pytest
+├── tools.py             # Skill extraction, matching, scoring
+├── skills_taxonomy.py    # Curated skill list: canonical name -> category + aliases
+├── llm_layer.py           # LiteLLM wrapper with provider-aware error handling
+├── file_parser.py          # PDF/DOCX/TXT text extraction
+├── main.py                  # CLI entry point
+├── requirements.txt          # Runtime dependencies
+├── requirements-dev.txt       # + pytest
 └── tests/
-    ├── test_tools.py          # Unit + regression tests, incl. the semantic-
-    │                            match threshold calibration (see below)
-    └── test_file_parser.py     # PDF/DOCX/TXT extraction tests
+    ├── test_tools.py           # Unit + regression tests, incl. the semantic-
+    │                             match threshold calibration (see below)
+    └── test_file_parser.py      # PDF/DOCX/TXT extraction tests
 ```
 
 ## Limitations & Roadmap
 
-- **Skill extraction is noun-phrase based (spaCy) plus a small alias table**,
-  not a curated skills taxonomy or trained NER model — it can still surface
-  phrases that aren't real skills on unusual inputs, and the alias table only
-  covers common abbreviations, not every possible synonym.
+- **The taxonomy covers ~130 common skills across 15 categories** — broad,
+  but not exhaustive. A skill entirely outside both the taxonomy and its
+  aliases won't be recognized at all, even via the embedding fallback (which
+  only compares *already-recognized* skills against each other). Extending
+  coverage means adding entries to `skills_taxonomy.py`.
 - **The 0.4 similarity threshold is an empirical calibration on a small
   manual sample** (documented and regression-tested in `test_tools.py`), not
-  a threshold tuned against a labeled precision/recall dataset. Short
-  technical phrases (1-3 words) don't embed as cleanly as full sentences, so
-  don't expect a razor-sharp match/no-match boundary.
+  a threshold tuned against a labeled precision/recall dataset.
+- A few taxonomy terms are ambiguous out of context (e.g. "Excel" as a skill
+  vs. the verb) — a minor source of false positives, same tradeoff any
+  keyword-based ATS tool makes.
 - Scanned/image-only PDFs have no extractable text (no OCR yet).
 - Only one resume vs. one JD at a time — no batch/bulk comparison.
 - Possible next steps: a proper labeled evaluation set for the matching
