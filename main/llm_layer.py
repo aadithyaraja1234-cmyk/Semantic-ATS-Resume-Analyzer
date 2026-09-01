@@ -4,7 +4,7 @@ from litellm import completion
 
 load_dotenv()
 
-MODEL_NAME = os.getenv("MODEL_NAME", "groq/llama-3.1-8b-instant")
+MODEL_NAME = os.getenv("MODEL_NAME", "groq/openai/gpt-oss-20b")
 
 # Maps a LiteLLM provider prefix (the part before "/" in MODEL_NAME) to the
 # environment variable that provider expects an API key in. Used to give a
@@ -65,9 +65,18 @@ def generate_agent_response(prompt):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            max_tokens=800
+            # Some models (e.g. openai/gpt-oss-*) spend part of this budget on
+            # hidden reasoning tokens before the visible answer -- 1200 gives
+            # headroom beyond that so long skill lists don't get cut off.
+            max_tokens=1200
         )
-        return response["choices"][0]["message"]["content"]
+        content = response["choices"][0]["message"]["content"]
+        if not content or not content.strip():
+            raise LLMConfigError(
+                "The AI model returned an empty response (likely spent its "
+                "whole token budget on internal reasoning). Try again."
+            )
+        return content
     except LLMConfigError:
         raise
     except Exception as e:
