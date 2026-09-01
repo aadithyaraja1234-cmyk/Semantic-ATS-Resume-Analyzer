@@ -72,12 +72,21 @@ Matched + missing skills + score ─→ LLM prompt ─→ AI evaluation (LiteLLM
 
 ## Setup
 
-**Requires Python 3.10 or 3.11.** `pip install` will fail on Python 3.13+ --
-`blis` (spaCy's linear-algebra backend) has no prebuilt wheel for 3.13 yet,
-so pip tries to compile it from source and fails without a C build
-toolchain. This is an upstream packaging gap (confirmed against the latest
-spaCy release, not just the pinned one here), not something fixable from
-this repo alone -- use 3.10 or 3.11 until that changes.
+**Requires Python 3.11.** Two independent, unrelated issues rule out every
+other version currently:
+
+- **3.12 and up**: `blis` (spaCy's linear-algebra backend) has no prebuilt
+  wheel yet, so pip tries to compile it from source and fails without a C
+  build toolchain. Confirmed against the latest spaCy release too, not just
+  the one pinned here -- this is an upstream packaging gap, not fixable from
+  this repo alone.
+- **3.10 and below**: `litellm` imports `typing.NotRequired`, which only
+  exists in the standard library from Python 3.11 onward (PEP 655) -- so
+  3.10 fails at import time regardless of the spaCy issue above.
+
+`main/requirements.txt` also pins `numpy<2.0.0`: `thinc` (spaCy's backend)
+ships a compiled extension built against NumPy 1.x, and NumPy 2.x breaks it
+at import time with a `ValueError` in `thinc/backends/numpy_ops.pyx`.
 
 If `python --version` shows something newer, install 3.11 alongside it
 rather than replacing your default:
